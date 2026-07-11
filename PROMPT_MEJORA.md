@@ -123,337 +123,155 @@ El participante que recibirá este proyecto los debe encontrar y resolver él mi
 
 INPUT
 Aquí está la cadena con los archivos:
-// === ARCHIVO: src/main/java/com/pragma/protocol/application/MessageService.java ===
-package com.pragma.protocol.application;
+package com.fintech.backend.application;
 
-import com.pragma.protocol.domain.Message;
-import com.pragma.protocol.infrastructure.MessageRepository;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class Application {
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+
+// === ARCHIVO: src/main/java/com/fintech/backend/application/protocol/ProtocolService.java ===
+package com.fintech.backend.application.protocol;
+
+import com.fintech.backend.domain.model.Message;
+import com.fintech.backend.infrastructure.protocol.ProtocolAdapter;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-
-import java.util.List;
 
 @Service
-public class MessageService {
-    private final MessageRepository messageRepository;
+public class ProtocolService {
+    private final ProtocolAdapter protocolAdapter;
 
-    public MessageService(MessageRepository messageRepository) {
-        this.messageRepository = messageRepository;
+    public ProtocolService(ProtocolAdapter protocolAdapter) {
+        this.protocolAdapter = protocolAdapter;
     }
 
-    public Flux<Message> getAllMessages() {
-        return messageRepository.findAll();
+    public void sendMessage(Message message) {
+        protocolAdapter.send(message);
     }
 
-    public Mono<Message> getMessageById(Long id) {
-        return messageRepository.findById(id);
-    }
-
-    public Mono<Message> createMessage(Message message) {
-        return messageRepository.save(message);
-    }
-
-    public Mono<Message> updateMessage(Long id, Message message) {
-        return messageRepository.findById(id)
-               .flatMap(existingMessage -> {
-                    existingMessage.setContent(message.getContent());
-                    return messageRepository.save(existingMessage);
-                });
-    }
-
-    public Mono<Void> deleteMessage(Long id) {
-        return messageRepository.deleteById(id);
+    public Message receiveMessage() {
+        return protocolAdapter.receive();
     }
 }
 
-// === ARCHIVO: src/main/java/com/pragma/protocol/domain/Message.java ===
-package com.pragma.protocol.domain;
+// === ARCHIVO: src/main/java/com/fintech/backend/domain/model/Message.java ===
+package com.fintech.backend.domain.model;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import jakarta.validation.constraints.NotBlank;
 
-@Entity
-public class Message {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    private String content;
+public record Message(
+    @NotBlank String id,
+    @NotBlank String content
+) {}
 
-    public Long getId() {
-        return id;
-    }
+// === ARCHIVO: src/main/java/com/fintech/backend/infrastructure/protocol/ProtocolAdapter.java ===
+package com.fintech.backend.infrastructure.protocol;
 
-    public void setId(Long id) {
-        this.id = id;
-    }
+import com.fintech.backend.domain.model.Message;
 
-    public String getContent() {
-        return content;
-    }
-
-    public void setContent(String content) {
-        this.content = content;
-    }
-}
-
-// === ARCHIVO: src/main/java/com/pragma/protocol/infrastructure/MessageRepository.java ===
-package com.pragma.protocol.infrastructure;
-
-import com.pragma.protocol.domain.Message;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-
-@Repository
-public interface MessageRepository extends JpaRepository<Message, Long> {
-    Flux<Message> findAll();
-    Mono<Message> findById(Long id);
-    Mono<Message> save(Message message);
-    Mono<Void> deleteById(Long id);
+public interface ProtocolAdapter {
+    void send(Message message);
+    Message receive();
 }
 
 // === ARCHIVO: src/main/resources/config/application.yml ===
-server:
-  port: 8080
 spring:
-  datasource:
-    url: jdbc:h2:mem:testdb
-    username: sa
-    password:
-    driver-class-name: org.h2.Driver
-  jpa:
-    hibernate:
-      ddl-auto: create-drop
-    show-sql: true
+  application:
+    name: fintech-backend
 
-// === ARCHIVO: src/main/java/com/pragma/protocol/application/MessageController.java ===
-package com.pragma.protocol.application;
+// === ARCHIVO: src/test/java/com/fintech/backend/application/protocol/ProtocolServiceTest.java ===
+package com.fintech.backend.application.protocol;
 
-import com.pragma.protocol.domain.Message;
-import com.pragma.protocol.service.MessageService;
-import org.springframework.http.HttpStatus;
+import com.fintech.backend.domain.model.Message;
+import com.fintech.backend.infrastructure.protocol.ProtocolAdapter;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import static org.junit.jupiter.api.Assertions.*;
+
+class ProtocolServiceTest {
+
+    @Mock
+    private ProtocolAdapter protocolAdapter;
+
+    @InjectMocks
+    private ProtocolService protocolService;
+
+    @Test
+    void sendMessage_shouldCallAdapterSendMethod() {
+        Message message = new Message("1", "Test message");
+        protocolService.sendMessage(message);
+        Mockito.verify(protocolAdapter).send(message);
+    }
+
+    @Test
+    void receiveMessage_shouldCallAdapterReceiveMethod() {
+        Mockito.when(protocolAdapter.receive()).thenReturn(new Message("1", "Test message received"));
+        Message receivedMessage = protocolService.receiveMessage();
+        assertNotNull(receivedMessage);
+        assertEquals("Test message received", receivedMessage.content());
+    }
+}
+
+// === ARCHIVO: src/main/java/com/fintech/backend/application/rest/Controller.java ===
+package com.fintech.backend.application.rest;
+
+import com.fintech.backend.application.protocol.ProtocolService;
+import com.fintech.backend.domain.dto.MessageDTO;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
-import java.util.List;
+import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/messages")
-public class MessageController {
-    private final MessageService messageService;
+@RequestMapping("/messages")
+public class Controller {
 
-    public MessageController(MessageService messageService) {
-        this.messageService = messageService;
-    }
+    private final ProtocolService protocolService;
 
-    @GetMapping
-    public Flux<Message> getAllMessages() {
-        return messageService.getAllMessages();
-    }
-
-    @GetMapping("/{id}")
-    public Mono<Message> getMessageById(@PathVariable Long id) {
-        return messageService.getMessageById(id);
+    @Autowired
+    public Controller(ProtocolService protocolService) {
+        this.protocolService = protocolService;
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public Mono<Message> createMessage(@RequestBody Message message) {
-        return messageService.createMessage(message);
+    public ResponseEntity<MessageDTO> sendMessage(@RequestBody MessageDTO messageDTO) {
+        var message = new com.fintech.backend.domain.model.Message(UUID.randomUUID().toString(), messageDTO.content());
+        protocolService.sendMessage(message);
+        return ResponseEntity.ok(messageDTO);
+    }
+
+    @GetMapping
+    public ResponseEntity<MessageDTO> receiveMessage() {
+        var message = protocolService.receiveMessage();
+        return ResponseEntity.ok(new MessageDTO(message.id(), message.content()));
     }
 
     @PutMapping("/{id}")
-    public Mono<Message> updateMessage(@PathVariable Long id, @RequestBody Message message) {
-        return messageService.updateMessage(id, message);
+    public ResponseEntity<MessageDTO> updateMessage(@PathVariable String id, @RequestBody MessageDTO messageDTO) {
+        return ResponseEntity.ok(messageDTO);
     }
 
     @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public Mono<Void> deleteMessage(@PathVariable Long id) {
-        return messageService.deleteMessage(id);
+    public ResponseEntity<Void> deleteMessage(@PathVariable String id) {
+        return ResponseEntity.noContent().build();
     }
 }
 
-// === ARCHIVO: src/test/java/com/pragma/protocol/application/MessageServiceTest.java ===
-package com.pragma.protocol.application;
+// === ARCHIVO: src/main/java/com/fintech/backend/domain/dto/MessageDTO.java ===
+package com.fintech.backend.domain.dto;
 
-import com.pragma.protocol.domain.Message;
-import com.pragma.protocol.infrastructure.MessageRepository;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
+import jakarta.validation.constraints.NotBlank;
 
-import java.util.List;
-
-@SpringBootTest
-class MessageServiceTest {
-    @Autowired
-    private MessageService messageService;
-
-    @MockBean
-    private MessageRepository messageRepository;
-
-    private Message message;
-
-    @BeforeEach
-    void setUp() {
-        message = new Message();
-        message.setId(1L);
-        message.setContent("Test Message");
-    }
-
-    @Test
-    void getAllMessages() {
-        Mockito.when(messageRepository.findAll()).thenReturn(Flux.just(message));
-        StepVerifier.create(messageService.getAllMessages())
-               .expectNextCount(1)
-               .verifyComplete();
-    }
-
-    @Test
-    void getMessageById() {
-        Mockito.when(messageRepository.findById(1L)).thenReturn(Mono.just(message));
-        StepVerifier.create(messageService.getMessageById(1L))
-               .expectNext(message)
-               .verifyComplete();
-    }
-
-    @Test
-    void createMessage() {
-        Mockito.when(messageRepository.save(message)).thenReturn(Mono.just(message));
-        StepVerifier.create(messageService.createMessage(message))
-               .expectNext(message)
-               .verifyComplete();
-    }
-
-    @Test
-    void updateMessage() {
-        Mockito.when(messageRepository.findById(1L)).thenReturn(Mono.just(message));
-        Mockito.when(messageRepository.save(message)).thenReturn(Mono.just(message));
-        StepVerifier.create(messageService.updateMessage(1L, message))
-               .expectNext(message)
-               .verifyComplete();
-    }
-
-    @Test
-    void deleteMessage() {
-        Mockito.when(messageRepository.deleteById(1L)).thenReturn(Mono.empty());
-        StepVerifier.create(messageService.deleteMessage(1L))
-               .verifyComplete();
-    }
-}
-
-// === ARCHIVO: src/test/java/com/pragma/protocol/domain/MessageTest.java ===
-package com.pragma.protocol.domain;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import static org.junit.jupiter.api.Assertions.*;
-
-class MessageTest {
-    private Message message;
-
-    @BeforeEach
-    void setUp() {
-        message = new Message();
-        message.setId(1L);
-        message.setContent("Test Message");
-    }
-
-    @Test
-    void getId() {
-        assertEquals(1L, message.getId());
-    }
-
-    @Test
-    void setId() {
-        message.setId(2L);
-        assertEquals(2L, message.getId());
-    }
-
-    @Test
-    void getContent() {
-        assertEquals("Test Message", message.getContent());
-    }
-
-    @Test
-    void setContent() {
-        message.setContent("New Test Message");
-        assertEquals("New Test Message", message.getContent());
-    }
-}
-
-// === ARCHIVO: src/test/java/com/pragma/protocol/infrastructure/MessageRepositoryTest.java ===
-package com.pragma.protocol.infrastructure;
-
-import com.pragma.protocol.domain.Message;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
-
-import java.util.List;
-
-@SpringBootTest
-class MessageRepositoryTest {
-    @Autowired
-    private MessageRepository messageRepository;
-
-    private Message message;
-
-    @BeforeEach
-    void setUp() {
-        message = new Message();
-        message.setId(1L);
-        message.setContent("Test Message");
-    }
-
-    @Test
-    void findAll() {
-        Mockito.when(messageRepository.findAll()).thenReturn(Flux.just(message));
-        StepVerifier.create(messageRepository.findAll())
-               .expectNextCount(1)
-               .verifyComplete();
-    }
-
-    @Test
-    void findById() {
-        Mockito.when(messageRepository.findById(1L)).thenReturn(Mono.just(message));
-        StepVerifier.create(messageRepository.findById(1L))
-               .expectNext(message)
-               .verifyComplete();
-    }
-
-    @Test
-    void save() {
-        Mockito.when(messageRepository.save(message)).thenReturn(Mono.just(message));
-        StepVerifier.create(messageRepository.save(message))
-               .expectNext(message)
-               .verifyComplete();
-    }
-
-    @Test
-    void deleteById() {
-        Mockito.when(messageRepository.deleteById(1L)).thenReturn(Mono.empty());
-        StepVerifier.create(messageRepository.deleteById(1L))
-               .verifyComplete();
-    }
-}
-
+public record MessageDTO(
+    @NotBlank String id,
+    @NotBlank String content
+) {}
 ```
